@@ -9,75 +9,97 @@
     <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
 </head>
 <body>
-    <div id="main-container">
+    <div id="app-container">
         <header>
-            <div class="logo">
-                <img src="/static/logo.png" alt="SSS" id="store-logo">
-                <span>SSS STORE</span>
-            </div>
-            <div class="cart-icon" onclick="openCart()">
-                <i class="ri-shopping-cart-2-line"></i>
-                <span id="cart-count">0</span>
+            <div class="logo">SSS SHOP</div>
+            <div class="cart-btn" onclick="openCartModal()">
+                <i class="ri-shopping-bag-3-fill"></i>
+                <span id="cart-badge" class="hidden">0</span>
             </div>
         </header>
 
-        <div class="search-bar">
-            <i class="ri-search-line"></i>
-            <input type="text" id="search-input" placeholder="Qidiruv...">
+        <div class="search-container">
+            <input type="text" id="search" placeholder="Mahsulotlarni qidirish..." onkeyup="filterProducts()">
         </div>
 
-        <div id="products-grid" class="products-grid">
+        <div id="products-grid" class="grid"></div>
+    </div>
+
+    <div id="product-modal" class="modal hidden">
+        <div class="modal-content full-height">
+            <div class="modal-top">
+                <button class="close-btn" onclick="closeProductModal()"><i class="ri-arrow-down-s-line"></i></button>
             </div>
+            <div id="pm-body">
+                <img id="pm-img" src="" alt="">
+                <div class="pm-info">
+                    <h2 id="pm-title">Product Name</h2>
+                    <p id="pm-price" class="price">0 so'm</p>
+                    <div id="pm-tags" class="tags-container"></div>
+                    <p id="pm-desc" class="description">Description goes here...</p>
+                </div>
+            </div>
+            <div class="pm-footer">
+                <div class="quantity-control">
+                    <button onclick="changeModalQty(-1)">-</button>
+                    <input type="number" id="pm-qty" value="1" min="1" oninput="validQty(this)">
+                    <button onclick="changeModalQty(1)">+</button>
+                </div>
+                <button class="add-btn" onclick="addToCartFromModal()">Savatga qo'shish</button>
+            </div>
+        </div>
     </div>
 
     <div id="cart-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Savat</h3>
-                <i class="ri-close-line" onclick="closeCart()"></i>
+                <h3>Savat <span id="cart-total-items"></span></h3>
+                <i class="ri-close-line" onclick="closeCartModal()"></i>
             </div>
-            <div id="cart-items"></div>
-            <div class="cart-total">
-                <span>Jami:</span>
-                <span id="total-price">0 so'm</span>
+            <div id="cart-items-list"></div>
+            <div class="cart-checkout">
+                <div class="total-row">
+                    <span>Jami:</span>
+                    <span id="cart-total-price">0 so'm</span>
+                </div>
+                <button class="checkout-btn" onclick="openCheckout()">Rasmiylashtirish</button>
             </div>
-            <button class="btn-primary" onclick="proceedToCheckout()">Buyurtma berish</button>
         </div>
     </div>
 
     <div id="checkout-modal" class="modal hidden">
         <div class="modal-content">
-            <h3>Buyurtma Turi</h3>
-            
-            <label class="radio-label">
-                <input type="radio" name="delivery" value="pickup" onchange="togglePayment('pickup')" checked>
-                <div class="radio-custom">
-                    <i class="ri-store-2-line"></i>
-                    <span>O'zim olib ketaman</span>
+            <h3>Buyurtma berish</h3>
+            <form id="order-form" onsubmit="event.preventDefault(); submitOrder();">
+                <div class="form-group">
+                    <label>Yetkazib berish turi:</label>
+                    <div class="radio-group">
+                        <label class="radio-card">
+                            <input type="radio" name="delivery" value="pickup" checked onchange="updatePaymentMethods()">
+                            <span>O'zim olib ketaman</span>
+                        </label>
+                        <label class="radio-card">
+                            <input type="radio" name="delivery" value="taxi" onchange="updatePaymentMethods()">
+                            <span>Taksi (Yetkazib berish)</span>
+                        </label>
+                    </div>
                 </div>
-            </label>
 
-            <label class="radio-label">
-                <input type="radio" name="delivery" value="taxi" onchange="togglePayment('taxi')">
-                <div class="radio-custom">
-                    <i class="ri-taxi-line"></i>
-                    <span>Yetkazib berish (Taxi)</span>
+                <div class="form-group">
+                    <label>To'lov turi:</label>
+                    <select id="payment-method">
+                        <option value="cash">Naqd</option>
+                        <option value="card">Karta orqali</option>
+                    </select>
                 </div>
-            </label>
 
-            <div id="payment-options" class="payment-section">
-                <h4>To'lov turi:</h4>
-                <select id="payment-method">
-                    <option value="cash">Naqd (Joyida)</option>
-                    <option value="card">Karta orqali</option>
-                </select>
-            </div>
+                <div class="form-group">
+                    <label>Telefon raqam:</label>
+                    <input type="tel" id="phone" placeholder="+996..." required>
+                </div>
 
-            <div class="form-group">
-                <input type="tel" id="user-phone" placeholder="+996 XX XX XX XX">
-            </div>
-
-            <button class="btn-success" onclick="submitOrder()">Tasdiqlash</button>
+                <button type="submit" class="confirm-btn">Tasdiqlash</button>
+            </form>
         </div>
     </div>
 
