@@ -4,5 +4,6 @@ uvicorn
 motor
 python-dotenv
 jinja2
-aiohttp
 python-multipart
+aiohttp
+dnspython
