@@ -2,9 +2,10 @@ import asyncio
 import logging
 import sys
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state import State, StatesGroup, default_state
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -12,10 +13,13 @@ from config import BOT_TOKEN, ADMIN_IDS, CARD_NUMBER
 from database import (add_product, get_all_products, get_product, delete_product, 
                       decrease_stock, set_product_stock, set_shop_info, get_shop_info)
 
-# Loglarni yoqamiz (Railway loglarida ko'rinishi uchun)
+# Loglarni yoqamiz
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+
+# Storage (Xotira) aniq belgilaymiz
+storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=storage)
 
 # --- HOLATLAR (STATES) ---
 class AdminState(StatesGroup):
@@ -57,63 +61,71 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.message(F.text == "➕ Mahsulot qo'shish")
 async def admin_add(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id): return
-    # Holatni o'rnatamiz
+    if not is_admin(message.from_user.id): 
+        await message.answer("Siz admin emassiz.")
+        return
+    
     await state.set_state(AdminState.photo)
-    await message.answer("Rasm yuboring (Faqat rasm formatida):", reply_markup=ReplyKeyboardRemove())
+    await message.answer("📸 <b>Mahsulot rasmini yuboring:</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
 
-# --- MUAMMONI HAL QILUVCHI QISM ---
+# ---------------------------------------------------------
+#  MUAMMONI HAL QILUVCHI HANDLERLAR (KETMA-KETLIK MUHIM)
+# ---------------------------------------------------------
 
-# 1. Agar to'g'ri rasm kelsa:
-@dp.message(AdminState.photo, F.photo)
-async def adm_ph(m: types.Message, s: FSMContext):
-    await s.update_data(file_id=m.photo[-1].file_id)
-    await m.answer("Nomini yozing:")
+# 1. TO'G'RI VARIANT: AdminState.photo holatida va RASM kelganda
+@dp.message(StateFilter(AdminState.photo), F.photo)
+async def adm_ph_success(m: types.Message, s: FSMContext):
+    file_id = m.photo[-1].file_id
+    await s.update_data(file_id=file_id)
+    await m.answer("✅ Rasm qabul qilindi!\n\nEndi mahsulot <b>NOMINI</b> yozing:", parse_mode="HTML")
     await s.set_state(AdminState.name)
 
-# 2. Agar Admin rasm o'rniga FAYL yuborsa:
-@dp.message(AdminState.photo, F.document)
-async def adm_ph_doc_error(m: types.Message):
-    await m.answer("⚠️ Iltimos, fayl emas, oddiy <b>RASM</b> (Photo) yuboring!", parse_mode="HTML")
+# 2. XATO VARIANT: AdminState.photo holatida, lekin FAYL yoki VIDEO kelganda
+@dp.message(StateFilter(AdminState.photo))
+async def adm_ph_fail(m: types.Message):
+    await m.answer(f"⚠️ Men rasm kutyapman, siz esa <b>{m.content_type}</b> yubordingiz.\n\nIltimos, oddiy rasm yuboring.", parse_mode="HTML")
 
-# 3. Agar Admin rasm o'rniga TEXT yozsa:
-@dp.message(AdminState.photo)
-async def adm_ph_text_error(m: types.Message):
-    await m.answer("⚠️ Men rasm kutyapman. Iltimos rasm yuboring yoki bekor qilish uchun /start bosing.")
+# 3. KRIZIS VARIANT: Hech qanday holat yo'q (State=None), lekin Rasm keldi
+# Bu aynan sizdagi "Jim qolish" muammosini ushlaydi
+@dp.message(StateFilter(default_state), F.photo)
+async def ghost_photo(m: types.Message, s: FSMContext):
+    # Agar admin bo'lsa, unga yordam beramiz
+    if is_admin(m.from_user.id):
+        await m.answer("⚠️ Bot qayta ishga tushgani sababli jarayon uzildi.\n\nIltimos, <b>➕ Mahsulot qo'shish</b> tugmasini qaytadan bosing va rasmni keyin yuboring.", parse_mode="HTML", reply_markup=main_menu_kb(m.from_user.id))
+    else:
+        # Oddiy user bo'lsa indamaymiz
+        pass
 
-# ------------------------------------
+# ---------------------------------------------------------
 
 @dp.message(AdminState.name)
 async def adm_nm(m: types.Message, s: FSMContext):
     await s.update_data(name=m.text)
-    await m.answer("Narxi (faqat raqam):")
+    await m.answer("💰 Narxi (faqat raqam):")
     await s.set_state(AdminState.price)
 
 @dp.message(AdminState.price)
 async def adm_pr(m: types.Message, s: FSMContext):
-    if not m.text.isdigit(): return await m.answer("Raqam yozing!")
+    if not m.text.isdigit(): return await m.answer("⚠️ Iltimos, faqat raqam yozing (so'mda)!")
     await s.update_data(price=int(m.text))
-    await m.answer("Tavsif (Description):")
+    await m.answer("📝 Tavsif (Description):")
     await s.set_state(AdminState.desc)
 
 @dp.message(AdminState.desc)
 async def adm_ds(m: types.Message, s: FSMContext):
     await s.update_data(desc=m.text)
-    await m.answer("Soni (Omborda nechta bor?):")
+    await m.answer("📦 Omborda nechta bor? (Raqam yozing):")
     await s.set_state(AdminState.stock)
 
 @dp.message(AdminState.stock)
 async def adm_st(m: types.Message, s: FSMContext):
-    if not m.text.isdigit(): return await m.answer("Raqam yozing!")
+    if not m.text.isdigit(): return await m.answer("⚠️ Faqat raqam yozing!")
     data = await s.get_data()
-    
-    # Bazaga yozish
     try:
         await add_product(data['name'], data['price'], int(m.text), data['file_id'], data['desc'])
-        await m.answer("✅ Mahsulot qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
+        await m.answer("✅ Mahsulot muvaffaqiyatli qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
     except Exception as e:
-        await m.answer(f"Xatolik bo'ldi: {e}")
-    
+        await m.answer(f"❌ Xatolik bo'ldi: {str(e)}")
     await s.clear()
 
 # --- ADMIN SOZLAMALAR ---
@@ -189,7 +201,7 @@ async def about_us(message: types.Message):
 @dp.message(F.text == "🛍 Do'kon")
 async def shop_list(message: types.Message):
     products = await get_all_products()
-    if not products: return await message.answer("Mahsulot yo'q")
+    if not products: return await message.answer("Hozircha mahsulotlar yo'q.")
     builder = InlineKeyboardBuilder()
     for p in products:
         if p.get('stock', 0) > 0:
@@ -208,8 +220,11 @@ async def view_prod(call: types.CallbackQuery):
     kb.button(text="🛒 Savatga qo'shish", callback_data=f"askqty_{pid}")
     kb.button(text="🔙 Orqaga", callback_data="back_shop")
     
-    await call.message.answer_photo(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
-    await call.message.delete()
+    try:
+        await call.message.answer_photo(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
+        await call.message.delete()
+    except Exception as e:
+        await call.message.answer("Rasmda xatolik. Balki rasm eski bazadan qolgan bo'lishi mumkin.")
 
 @dp.callback_query(F.data == "back_shop")
 async def back_shop(call: types.CallbackQuery):
@@ -226,7 +241,7 @@ async def ask_qty(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(UserState.input_qty)
 async def add_cart_logic(message: types.Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("Raqam yozing.")
+    if not message.text.isdigit(): return await message.answer("Iltimos, faqat raqam yozing.")
     qty = int(message.text)
     if qty <= 0: return await message.answer("Kamida 1 ta.")
     
@@ -309,7 +324,7 @@ async def dlv_type(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(UserState.location)
 async def get_loc(message: types.Message, state: FSMContext):
-    loc = f"http://maps.google.com/?q={message.location.latitude},{message.location.longitude}" if message.location else message.text
+    loc = f"http://googleusercontent.com/maps.google.com/?q={message.location.latitude},{message.location.longitude}" if message.location else message.text
     await state.update_data(location_link=loc)
     await message.answer("Izohingiz bormi?", reply_markup=ReplyKeyboardRemove())
     await state.set_state(UserState.comment)
@@ -375,14 +390,15 @@ async def finalize_order(message, state, pay_method, check_id=None, check_type="
     await message.answer("✅ Buyurtma qabul qilindi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
-# --- DEBUG: Agar rasm kelsa-yu, holat yo'q bo'lsa (Sizdagi muammo shu) ---
-@dp.message(F.photo)
-async def debug_photo(message: types.Message):
-    await message.answer("Rasm qabul qilindi, lekin hozir mahsulot qo'shish rejimida emassiz.\n\n"
-                         "Iltimos, avval <b>➕ Mahsulot qo'shish</b> tugmasini bosing, keyin rasmni yuboring.", parse_mode="HTML")
+# --- ZOMBI HANDLER (OXIRGI CHORA) ---
+@dp.message()
+async def catch_all(message: types.Message):
+    # Agar bot hech qanday buyruqni tushunmasa va hech narsa kutmayotgan bo'lsa
+    # Lekin rasm kelsa, bu "Arvoh rasm" bo'ladi
+    if message.photo and is_admin(message.from_user.id):
+         await message.answer("⚠️ Bot qayta ishga tushgani uchun jarayon uzildi.\nIltimos, <b>➕ Mahsulot qo'shish</b> tugmasini bosib, qaytadan urinib ko'ring.", parse_mode="HTML", reply_markup=main_menu_kb(message.from_user.id))
 
 async def main():
-    # ESKI WEBHOOKLARNI O'CHIRISH (MUHIM)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
