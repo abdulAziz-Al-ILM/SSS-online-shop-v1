@@ -22,13 +22,11 @@ class AdminState(StatesGroup):
     price = State()
     desc = State()
     stock = State()
-    # Edit Stock
     edit_stock_qty = State()
-    # Shop Info
     shop_address = State()
 
 class UserState(StatesGroup):
-    input_qty = State() # Nechta olishini yozish uchun
+    input_qty = State()
     phone = State()
     location = State()
     comment = State()
@@ -55,11 +53,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 # ================= ADMIN BO'LIMI =================
 
-# 1. Mahsulot qo'shish (Eski kod bilan bir xil, qisqartirib o'tmayman, to'liq yozaman)
 @dp.message(F.text == "➕ Mahsulot qo'shish")
 async def admin_add(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id): return
-    await message.answer("Rasm yuboring:", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Rasm yuboring (Iltimos, 'Fayl' emas, oddiy 'Rasm' qilib yuboring):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(AdminState.photo)
 
 @dp.message(AdminState.photo, F.photo)
@@ -68,33 +65,39 @@ async def adm_ph(m: types.Message, s: FSMContext):
     await m.answer("Nomini yozing:")
     await s.set_state(AdminState.name)
 
+# Admin rasm o'rniga fayl yuborsa (Ogohlantirish):
+@dp.message(AdminState.photo)
+async def adm_ph_error(m: types.Message):
+    await m.answer("⚠️ Mahsulot uchun iltimos, rasmni <b>FILE</b> (Document) qilib emas, oddiy <b>RASM</b> (Photo) sifatida yuboring!", parse_mode="HTML")
+
 @dp.message(AdminState.name)
 async def adm_nm(m: types.Message, s: FSMContext):
     await s.update_data(name=m.text)
-    await m.answer("Narxi (raqam):")
+    await m.answer("Narxi (faqat raqam):")
     await s.set_state(AdminState.price)
 
 @dp.message(AdminState.price)
 async def adm_pr(m: types.Message, s: FSMContext):
     if not m.text.isdigit(): return await m.answer("Raqam yozing!")
     await s.update_data(price=int(m.text))
-    await m.answer("Tavsif:")
+    await m.answer("Tavsif (Description):")
     await s.set_state(AdminState.desc)
 
 @dp.message(AdminState.desc)
 async def adm_ds(m: types.Message, s: FSMContext):
     await s.update_data(desc=m.text)
-    await m.answer("Soni (Ombordagi):")
+    await m.answer("Soni (Omborda nechta bor?):")
     await s.set_state(AdminState.stock)
 
 @dp.message(AdminState.stock)
 async def adm_st(m: types.Message, s: FSMContext):
+    if not m.text.isdigit(): return await m.answer("Raqam yozing!")
     data = await s.get_data()
     await add_product(data['name'], data['price'], int(m.text), data['file_id'], data['desc'])
-    await m.answer("✅ Qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
+    await m.answer("✅ Mahsulot qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
     await s.clear()
 
-# 2. SOZLAMALAR (YANGI)
+# --- SOZLAMALAR ---
 @dp.message(F.text == "⚙️ Sozlamalar")
 async def admin_settings(message: types.Message):
     if not is_admin(message.from_user.id): return
@@ -105,7 +108,6 @@ async def admin_settings(message: types.Message):
     builder.adjust(1)
     await message.answer("Sozlamalar bo'limi:", reply_markup=builder.as_markup())
 
-# Manzilni o'zgartirish
 @dp.callback_query(F.data == "adm_set_addr")
 async def set_addr_start(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer("Yangi manzil va aloqa ma'lumotlarini bitta xabarda yozing:")
@@ -118,7 +120,6 @@ async def save_addr(message: types.Message, state: FSMContext):
     await message.answer("✅ Manzil yangilandi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
-# Mahsulot sonini o'zgartirish
 @dp.callback_query(F.data == "adm_edit_stock")
 async def edit_stock_list(call: types.CallbackQuery):
     products = await get_all_products()
@@ -144,7 +145,6 @@ async def save_new_stock(message: types.Message, state: FSMContext):
     await message.answer("✅ Soni yangilandi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
-# O'chirish (Eski kod mantiqida)
 @dp.callback_query(F.data == "adm_del_prod")
 async def del_list(call: types.CallbackQuery):
     products = await get_all_products()
@@ -173,7 +173,7 @@ async def shop_list(message: types.Message):
     if not products: return await message.answer("Mahsulot yo'q")
     builder = InlineKeyboardBuilder()
     for p in products:
-        if p.get('stock', 0) > 0: # Faqat bor narsalar
+        if p.get('stock', 0) > 0: 
             builder.button(text=f"{p['name']} - {p['price']} so'm", callback_data=f"view_{p['_id']}")
     builder.adjust(1)
     await message.answer("📦 Mahsulot tanlang:", reply_markup=builder.as_markup())
@@ -190,14 +190,13 @@ async def view_prod(call: types.CallbackQuery):
     kb.button(text="🔙 Orqaga", callback_data="back_shop")
     
     await call.message.answer_photo(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
-    await call.message.delete() # Eskisini o'chiramiz toza turishi uchun
+    await call.message.delete()
 
 @dp.callback_query(F.data == "back_shop")
 async def back_shop(call: types.CallbackQuery):
     await call.message.delete()
     await call.message.answer("🛍 Do'kon", reply_markup=main_menu_kb(call.from_user.id))
 
-# --- YANGI: SONINI SO'RASH ---
 @dp.callback_query(F.data.startswith("askqty_"))
 async def ask_qty(call: types.CallbackQuery, state: FSMContext):
     pid = call.data.split("_")[1]
@@ -208,11 +207,9 @@ async def ask_qty(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(UserState.input_qty)
 async def add_cart_logic(message: types.Message, state: FSMContext):
-    if not message.text.isdigit():
-        return await message.answer("Iltimos, faqat raqam yozing.")
-    
+    if not message.text.isdigit(): return await message.answer("Iltimos, faqat raqam yozing.")
     qty = int(message.text)
-    if qty <= 0: return await message.answer("Kamida 1 ta bo'lishi kerak.")
+    if qty <= 0: return await message.answer("Kamida 1 ta.")
     
     data = await state.get_data()
     pid = data.get('temp_pid')
@@ -221,7 +218,6 @@ async def add_cart_logic(message: types.Message, state: FSMContext):
     if qty > p['stock']:
         return await message.answer(f"Uzur, bizda faqat {p['stock']} ta qolgan.")
     
-    # Savatga qo'shish
     user_data = await state.get_data()
     cart = user_data.get("cart", {})
     
@@ -231,10 +227,9 @@ async def add_cart_logic(message: types.Message, state: FSMContext):
         cart[pid] = {'name': p['name'], 'price': p['price'], 'qty': qty}
     
     await state.update_data(cart=cart)
-    await message.answer(f"✅ {qty} ta {p['name']} savatga qo'shildi!\n\nYana biror narsa olasizmi?", reply_markup=main_menu_kb(message.from_user.id))
-    await state.set_state(None) # State dan chiqamiz
+    await message.answer(f"✅ {qty} ta {p['name']} savatga qo'shildi!", reply_markup=main_menu_kb(message.from_user.id))
+    await state.set_state(None)
 
-# --- SAVAT VA BUYURTMA ---
 @dp.message(F.text == "🛒 Savat")
 async def show_cart(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -283,7 +278,6 @@ async def dlv_type(call: types.CallbackQuery, state: FSMContext):
     await state.update_data(delivery_type=dtype)
     
     if dtype == "dlv_taxi":
-        # LOKATSIYA SO'RASH
         kb = ReplyKeyboardMarkup(keyboard=[
             [KeyboardButton(text="📍 Lokatsiya yuborish", request_location=True)],
             [KeyboardButton(text="O'tkazib yuborish")]
@@ -291,7 +285,6 @@ async def dlv_type(call: types.CallbackQuery, state: FSMContext):
         await call.message.answer("Iltimos, lokatsiya yuboring (yoki manzilni yozma qoldiring):", reply_markup=kb)
         await state.set_state(UserState.location)
     else:
-        # Olib ketish
         await call.message.answer("Qo'shimcha izohingiz bormi? (Yozib yuboring yoki 'Yo'q' deng)", reply_markup=ReplyKeyboardRemove())
         await state.set_state(UserState.comment)
     await call.answer()
@@ -301,7 +294,7 @@ async def get_loc(message: types.Message, state: FSMContext):
     if message.location:
         loc = f"https://www.google.com/maps?q={message.location.latitude},{message.location.longitude}"
     else:
-        loc = message.text # Agar qo'lda yozsa
+        loc = message.text 
     
     await state.update_data(location_link=loc)
     await message.answer("Qo'shimcha izohingiz bormi?", reply_markup=ReplyKeyboardRemove())
@@ -311,23 +304,35 @@ async def get_loc(message: types.Message, state: FSMContext):
 async def get_comment(message: types.Message, state: FSMContext):
     await state.update_data(comment=message.text)
     
-    # To'lov turi
     data = await state.get_data()
     if data['delivery_type'] == "dlv_taxi":
-        await message.answer(f"To'lov karta orqali: `{CARD_NUMBER}`\nIltimos chekni yuboring:")
+        await message.answer(f"To'lov karta orqali: `{CARD_NUMBER}`\nIltimos chekni yuboring (Rasm yoki Fayl):")
         await state.set_state(UserState.check_photo)
     else:
         await finalize_order(message, state, "Naqd")
 
-@dp.message(UserState.check_photo, F.photo)
-async def get_chk(message: types.Message, state: FSMContext):
-    await finalize_order(message, state, "Karta", message.photo[-1].file_id)
+# --- TO'LOV CHEKINI QABUL QILISH (RASM yoki FAYL) ---
+@dp.message(UserState.check_photo)
+async def get_chk_universal(message: types.Message, state: FSMContext):
+    file_id = None
+    check_type = None
 
-async def finalize_order(message, state, pay_method, check_id=None):
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        check_type = "photo"
+    elif message.document:
+        file_id = message.document.file_id
+        check_type = "document"
+    
+    if file_id:
+        await finalize_order(message, state, "Karta", file_id, check_type)
+    else:
+        await message.answer("Iltimos, chekni rasm yoki fayl (pdf, doc) ko'rinishida yuboring.")
+
+async def finalize_order(message, state, pay_method, check_id=None, check_type="photo"):
     data = await state.get_data()
     cart = data.get("cart", {})
     
-    # 1. ADMINGA HISOBOT
     txt = f"🚨 <b>YANGI BUYURTMA</b>\n\n"
     txt += f"👤 {message.chat.full_name}\n📞 {data.get('phone')}\n"
     txt += f"📝 Izoh: {data.get('comment')}\n"
@@ -339,19 +344,22 @@ async def finalize_order(message, state, pay_method, check_id=None):
         summ = item['price'] * item['qty']
         total += summ
         txt += f"▫️ {item['name']} x {item['qty']} = {summ}\n"
-        
-        # --- YANGI: AVTOMATIK OMBORDAN AYIRISH ---
         await decrease_stock(pid, item['qty'])
         
     txt += f"\n💰 Jami: {total} so'm ({pay_method})"
     
+    # Adminga yuborish
     for admin in ADMIN_IDS:
         try:
             if check_id:
-                await bot.send_photo(admin, check_id, caption=txt, parse_mode="HTML")
+                if check_type == "document":
+                    await bot.send_document(admin, check_id, caption=txt, parse_mode="HTML")
+                else:
+                    await bot.send_photo(admin, check_id, caption=txt, parse_mode="HTML")
             else:
                 await bot.send_message(admin, txt, parse_mode="HTML")
-        except: pass
+        except Exception as e:
+            print(f"Adminga yuborishda xato: {e}")
         
     await message.answer("✅ Buyurtmangiz qabul qilindi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
