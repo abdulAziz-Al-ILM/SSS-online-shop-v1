@@ -4,7 +4,7 @@ import sys
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state import State, StatesGroup, default_state
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -13,7 +13,7 @@ from config import BOT_TOKEN, ADMIN_IDS, CARD_NUMBER
 from database import (add_product, get_all_products, get_product, delete_product, 
                       decrease_stock, set_product_stock, set_shop_info, get_shop_info)
 
-# Loglarni maksimal darajada yoqamiz
+# Loglarni yoqamiz (Xatolikni ko'rish uchun)
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 storage = MemoryStorage()
@@ -68,83 +68,74 @@ async def admin_add(message: types.Message, state: FSMContext):
     await message.answer("📸 <b>Mahsulot rasmini yuboring:</b>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
 
 # -------------------------------------------------------------
-#  O'Q O'TMAS HANDLER (RASM UCHUN)
+#  MUAMMONI HAL QILUVCHI QISM (RASM QABUL QILISH)
 # -------------------------------------------------------------
-# Bu yerda F.photo yo'q. Bu handler AdminState.photo holatidagi 
-# HAR QANDAY xabarni ushlab oladi va ichida tekshiradi.
+
+# 1. Rasm yoki Fayl kelganda (To'g'ri ishlasa)
 @dp.message(StateFilter(AdminState.photo))
-async def admin_process_any_media(message: types.Message, state: FSMContext):
-    # 1. Agar Rasm bo'lsa
+async def admin_process_media(message: types.Message, state: FSMContext):
+    file_id = None
+    
     if message.photo:
         file_id = message.photo[-1].file_id
+    elif message.document:
+        file_id = message.document.file_id
+    
+    if file_id:
         await state.update_data(file_id=file_id)
-        await message.answer("✅ Rasm qabul qilindi!\n\nEndi mahsulot <b>NOMINI</b> yozing:", parse_mode="HTML")
+        await message.answer("✅ Rasm qabul qilindi!\n\nEndi mahsulot <b>NOMINI</b> yozing (Masalan: iPhone 15):", parse_mode="HTML")
         await state.set_state(AdminState.name)
-        return
-
-    # 2. Agar Fayl bo'lsa (Siz so'ragan edingiz)
-    if message.document:
-        # Fayl rasm ekanligini tekshirishga harakat qilamiz (mime_type orqali)
-        if message.document.mime_type and message.document.mime_type.startswith('image'):
-             file_id = message.document.file_id
-             await state.update_data(file_id=file_id)
-             await message.answer("✅ Fayl-rasm qabul qilindi!\n\nEndi mahsulot <b>NOMINI</b> yozing:", parse_mode="HTML")
-             await state.set_state(AdminState.name)
-             return
-        else:
-             # Agar rasm bo'lmasa ham qabul qilaveraylik (Fayl sifatida)
-             file_id = message.document.file_id
-             await state.update_data(file_id=file_id)
-             await message.answer("✅ Fayl qabul qilindi!\n\nEndi mahsulot <b>NOMINI</b> yozing:", parse_mode="HTML")
-             await state.set_state(AdminState.name)
-             return
-
-    # 3. Agar Video bo'lsa
-    if message.video:
-         await message.answer("⚠️ Video qabul qilinmaydi. Iltimos, rasm yuboring.")
-         return
-
-    # 4. Agar Matn bo'lsa
-    if message.text:
-         await message.answer("⚠️ Men rasm kutyapman, siz matn yozdingiz. Iltimos rasm tashlang.")
-         return
-
-    # 5. Boshqa narsa
-    await message.answer("⚠️ Tushunarsiz format. Iltimos, oddiy rasm yuboring.")
+    else:
+        await message.answer("⚠️ Iltimos, rasm yoki fayl yuboring. Matn yozmang.")
 
 # -------------------------------------------------------------
 
+# 2. Nomini qabul qilish (TEXT)
 @dp.message(AdminState.name)
 async def adm_nm(m: types.Message, s: FSMContext):
+    if not m.text:
+        await m.answer("⚠️ Iltimos, nomini matn (yozuv) ko'rinishida yozing.")
+        return
     await s.update_data(name=m.text)
-    await m.answer("💰 Narxi (faqat raqam):")
+    await m.answer("💰 <b>Narxi</b> (faqat raqam, so'mda):", parse_mode="HTML")
     await s.set_state(AdminState.price)
 
+# 3. Narxini qabul qilish
 @dp.message(AdminState.price)
 async def adm_pr(m: types.Message, s: FSMContext):
-    if not m.text.isdigit(): return await m.answer("⚠️ Iltimos, faqat raqam yozing (so'mda)!")
+    if not m.text or not m.text.isdigit(): 
+        await m.answer("⚠️ Iltimos, faqat raqam yozing!")
+        return
     await s.update_data(price=int(m.text))
-    await m.answer("📝 Tavsif (Description):")
+    await m.answer("📝 <b>Tavsif</b> (Description) yozing:", parse_mode="HTML")
     await s.set_state(AdminState.desc)
 
+# 4. Tavsif
 @dp.message(AdminState.desc)
 async def adm_ds(m: types.Message, s: FSMContext):
+    if not m.text:
+        await m.answer("⚠️ Tavsif matn bo'lishi kerak.")
+        return
     await s.update_data(desc=m.text)
-    await m.answer("📦 Omborda nechta bor? (Raqam yozing):")
+    await m.answer("📦 <b>Omborda nechta bor?</b> (Raqam yozing):", parse_mode="HTML")
     await s.set_state(AdminState.stock)
 
+# 5. Soni va SAQLASH
 @dp.message(AdminState.stock)
 async def adm_st(m: types.Message, s: FSMContext):
-    if not m.text.isdigit(): return await m.answer("⚠️ Faqat raqam yozing!")
+    if not m.text or not m.text.isdigit(): 
+        await m.answer("⚠️ Faqat raqam yozing!")
+        return
+    
     data = await s.get_data()
     try:
         await add_product(data['name'], data['price'], int(m.text), data['file_id'], data['desc'])
-        await m.answer("✅ Mahsulot muvaffaqiyatli qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
+        await m.answer("✅ <b>Mahsulot muvaffaqiyatli qo'shildi!</b>", parse_mode="HTML", reply_markup=main_menu_kb(m.from_user.id))
     except Exception as e:
         await m.answer(f"❌ Xatolik bo'ldi: {str(e)}")
     await s.clear()
 
-# --- SOZLAMALAR ---
+# --- ADMIN SOZLAMALAR ---
 @dp.message(F.text == "⚙️ Sozlamalar")
 async def admin_settings(message: types.Message):
     if not is_admin(message.from_user.id): return
@@ -217,7 +208,7 @@ async def about_us(message: types.Message):
 @dp.message(F.text == "🛍 Do'kon")
 async def shop_list(message: types.Message):
     products = await get_all_products()
-    if not products: return await message.answer("Mahsulot yo'q")
+    if not products: return await message.answer("Mahsulotlar hozircha yo'q.")
     builder = InlineKeyboardBuilder()
     for p in products:
         if p.get('stock', 0) > 0:
@@ -237,17 +228,11 @@ async def view_prod(call: types.CallbackQuery):
     kb.button(text="🔙 Orqaga", callback_data="back_shop")
     
     try:
-        # Fayl yoki Rasm ekanligini tekshirmasdan jo'natamiz, aiogram o'zi hal qiladi
-        # Agar rasm file_id bo'lsa photo ga, document bo'lsa documentga
-        # Lekin oddiylik uchun send_photo ishlatamiz, agar o'xshamasa send_document
-        try:
-            await call.message.answer_photo(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
-        except:
-            await call.message.answer_document(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
-            
-        await call.message.delete()
-    except Exception as e:
-        await call.message.answer("Rasmda muammo bor.")
+        await call.message.answer_photo(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
+    except:
+        await call.message.answer_document(p['file_id'], caption=caption, parse_mode="HTML", reply_markup=kb.as_markup())
+    
+    await call.message.delete()
 
 @dp.callback_query(F.data == "back_shop")
 async def back_shop(call: types.CallbackQuery):
@@ -412,6 +397,17 @@ async def finalize_order(message, state, pay_method, check_id=None, check_type="
         
     await message.answer("✅ Buyurtma qabul qilindi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
+
+# -------------------------------------------------------------
+# !!! KUTKARUVCHI QISM !!!
+# Agar bot xotirani yo'qotib, sizdan rasm kelsa (lekin kutmayotgan bo'lsa),
+# jim turmasdan sizga "Qaytadan bosing" deb aytadi.
+# -------------------------------------------------------------
+@dp.message()
+async def catch_all_zombie_handler(message: types.Message):
+    # Faqat admin uchun va agar rasm/fayl bo'lsa
+    if is_admin(message.from_user.id) and (message.photo or message.document):
+        await message.answer("⚠️ <b>Bot qayta ishga tushdi va jarayon uzildi.</b>\n\nIltimos, <b>➕ Mahsulot qo'shish</b> tugmasini boshqatdan bosing va rasmni keyin yuboring.", parse_mode="HTML", reply_markup=main_menu_kb(message.from_user.id))
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
