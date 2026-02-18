@@ -1,17 +1,19 @@
 import asyncio
 import logging
+import sys
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import BOT_TOKEN, ADMIN_IDS, CARD_NUMBER
 from database import (add_product, get_all_products, get_product, delete_product, 
                       decrease_stock, set_product_stock, set_shop_info, get_shop_info)
 
-logging.basicConfig(level=logging.INFO)
+# Loglarni yoqamiz (Railway loglarida ko'rinishi uchun)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -56,19 +58,30 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.message(F.text == "➕ Mahsulot qo'shish")
 async def admin_add(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id): return
-    await message.answer("Rasm yuboring (Iltimos, 'Fayl' emas, oddiy 'Rasm' qilib yuboring):", reply_markup=ReplyKeyboardRemove())
+    # Holatni o'rnatamiz
     await state.set_state(AdminState.photo)
+    await message.answer("Rasm yuboring (Faqat rasm formatida):", reply_markup=ReplyKeyboardRemove())
 
+# --- MUAMMONI HAL QILUVCHI QISM ---
+
+# 1. Agar to'g'ri rasm kelsa:
 @dp.message(AdminState.photo, F.photo)
 async def adm_ph(m: types.Message, s: FSMContext):
     await s.update_data(file_id=m.photo[-1].file_id)
     await m.answer("Nomini yozing:")
     await s.set_state(AdminState.name)
 
-# Admin rasm o'rniga fayl yuborsa (Ogohlantirish):
+# 2. Agar Admin rasm o'rniga FAYL yuborsa:
+@dp.message(AdminState.photo, F.document)
+async def adm_ph_doc_error(m: types.Message):
+    await m.answer("⚠️ Iltimos, fayl emas, oddiy <b>RASM</b> (Photo) yuboring!", parse_mode="HTML")
+
+# 3. Agar Admin rasm o'rniga TEXT yozsa:
 @dp.message(AdminState.photo)
-async def adm_ph_error(m: types.Message):
-    await m.answer("⚠️ Mahsulot uchun iltimos, rasmni <b>FILE</b> (Document) qilib emas, oddiy <b>RASM</b> (Photo) sifatida yuboring!", parse_mode="HTML")
+async def adm_ph_text_error(m: types.Message):
+    await m.answer("⚠️ Men rasm kutyapman. Iltimos rasm yuboring yoki bekor qilish uchun /start bosing.")
+
+# ------------------------------------
 
 @dp.message(AdminState.name)
 async def adm_nm(m: types.Message, s: FSMContext):
@@ -93,11 +106,17 @@ async def adm_ds(m: types.Message, s: FSMContext):
 async def adm_st(m: types.Message, s: FSMContext):
     if not m.text.isdigit(): return await m.answer("Raqam yozing!")
     data = await s.get_data()
-    await add_product(data['name'], data['price'], int(m.text), data['file_id'], data['desc'])
-    await m.answer("✅ Mahsulot qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
+    
+    # Bazaga yozish
+    try:
+        await add_product(data['name'], data['price'], int(m.text), data['file_id'], data['desc'])
+        await m.answer("✅ Mahsulot qo'shildi!", reply_markup=main_menu_kb(m.from_user.id))
+    except Exception as e:
+        await m.answer(f"Xatolik bo'ldi: {e}")
+    
     await s.clear()
 
-# --- SOZLAMALAR ---
+# --- ADMIN SOZLAMALAR ---
 @dp.message(F.text == "⚙️ Sozlamalar")
 async def admin_settings(message: types.Message):
     if not is_admin(message.from_user.id): return
@@ -110,14 +129,14 @@ async def admin_settings(message: types.Message):
 
 @dp.callback_query(F.data == "adm_set_addr")
 async def set_addr_start(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("Yangi manzil va aloqa ma'lumotlarini bitta xabarda yozing:")
+    await call.message.answer("Yangi manzilni yozing:")
     await state.set_state(AdminState.shop_address)
     await call.answer()
 
 @dp.message(AdminState.shop_address)
 async def save_addr(message: types.Message, state: FSMContext):
     await set_shop_info(message.text, "Admin")
-    await message.answer("✅ Manzil yangilandi!", reply_markup=main_menu_kb(message.from_user.id))
+    await message.answer("✅ Manzil saqlandi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
 @dp.callback_query(F.data == "adm_edit_stock")
@@ -127,13 +146,13 @@ async def edit_stock_list(call: types.CallbackQuery):
     for p in products:
         builder.button(text=f"{p['name']} ({p['stock']} ta)", callback_data=f"editst_{p['_id']}")
     builder.adjust(1)
-    await call.message.edit_text("Qaysi mahsulot sonini o'zgartiramiz?", reply_markup=builder.as_markup())
+    await call.message.edit_text("Mahsulotni tanlang:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("editst_"))
 async def edit_stock_ask(call: types.CallbackQuery, state: FSMContext):
     pid = call.data.split("_")[1]
     await state.update_data(edit_pid=pid)
-    await call.message.answer("Yangi sonini kiriting (raqam):")
+    await call.message.answer("Yangi sonini yozing:")
     await state.set_state(AdminState.edit_stock_qty)
     await call.answer()
 
@@ -160,7 +179,7 @@ async def del_item(call: types.CallbackQuery):
     await call.answer("O'chirildi!")
     await call.message.delete()
 
-# ================= MIJOZ BO'LIMI =================
+# ================= MIJOZ TARAFI =================
 
 @dp.message(F.text == "ℹ️ Biz haqimizda")
 async def about_us(message: types.Message):
@@ -173,7 +192,7 @@ async def shop_list(message: types.Message):
     if not products: return await message.answer("Mahsulot yo'q")
     builder = InlineKeyboardBuilder()
     for p in products:
-        if p.get('stock', 0) > 0: 
+        if p.get('stock', 0) > 0:
             builder.button(text=f"{p['name']} - {p['price']} so'm", callback_data=f"view_{p['_id']}")
     builder.adjust(1)
     await message.answer("📦 Mahsulot tanlang:", reply_markup=builder.as_markup())
@@ -207,7 +226,7 @@ async def ask_qty(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(UserState.input_qty)
 async def add_cart_logic(message: types.Message, state: FSMContext):
-    if not message.text.isdigit(): return await message.answer("Iltimos, faqat raqam yozing.")
+    if not message.text.isdigit(): return await message.answer("Raqam yozing.")
     qty = int(message.text)
     if qty <= 0: return await message.answer("Kamida 1 ta.")
     
@@ -220,7 +239,6 @@ async def add_cart_logic(message: types.Message, state: FSMContext):
     
     user_data = await state.get_data()
     cart = user_data.get("cart", {})
-    
     if pid in cart:
         cart[pid]['qty'] += qty
     else:
@@ -258,7 +276,7 @@ async def clr(call: types.CallbackQuery, state: FSMContext):
 async def checkout_start(call: types.CallbackQuery, state: FSMContext):
     await call.message.delete()
     kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="📱 Raqamni yuborish", request_contact=True)]], resize_keyboard=True)
-    await call.message.answer("Bog'lanish uchun raqamingizni yuboring:", reply_markup=kb)
+    await call.message.answer("Bog'lanish uchun raqam yuboring:", reply_markup=kb)
     await state.set_state(UserState.phone)
 
 @dp.message(UserState.phone)
@@ -282,22 +300,18 @@ async def dlv_type(call: types.CallbackQuery, state: FSMContext):
             [KeyboardButton(text="📍 Lokatsiya yuborish", request_location=True)],
             [KeyboardButton(text="O'tkazib yuborish")]
         ], resize_keyboard=True)
-        await call.message.answer("Iltimos, lokatsiya yuboring (yoki manzilni yozma qoldiring):", reply_markup=kb)
+        await call.message.answer("Lokatsiya yuboring:", reply_markup=kb)
         await state.set_state(UserState.location)
     else:
-        await call.message.answer("Qo'shimcha izohingiz bormi? (Yozib yuboring yoki 'Yo'q' deng)", reply_markup=ReplyKeyboardRemove())
+        await call.message.answer("Izohingiz bormi? (Yozing yoki 'Yoq')", reply_markup=ReplyKeyboardRemove())
         await state.set_state(UserState.comment)
     await call.answer()
 
 @dp.message(UserState.location)
 async def get_loc(message: types.Message, state: FSMContext):
-    if message.location:
-        loc = f"https://www.google.com/maps?q={message.location.latitude},{message.location.longitude}"
-    else:
-        loc = message.text 
-    
+    loc = f"http://maps.google.com/?q={message.location.latitude},{message.location.longitude}" if message.location else message.text
     await state.update_data(location_link=loc)
-    await message.answer("Qo'shimcha izohingiz bormi?", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Izohingiz bormi?", reply_markup=ReplyKeyboardRemove())
     await state.set_state(UserState.comment)
 
 @dp.message(UserState.comment)
@@ -306,12 +320,11 @@ async def get_comment(message: types.Message, state: FSMContext):
     
     data = await state.get_data()
     if data['delivery_type'] == "dlv_taxi":
-        await message.answer(f"To'lov karta orqali: `{CARD_NUMBER}`\nIltimos chekni yuboring (Rasm yoki Fayl):")
+        await message.answer(f"Karta: `{CARD_NUMBER}`\nChekni rasm yoki fayl qilib yuboring:")
         await state.set_state(UserState.check_photo)
     else:
         await finalize_order(message, state, "Naqd")
 
-# --- TO'LOV CHEKINI QABUL QILISH (RASM yoki FAYL) ---
 @dp.message(UserState.check_photo)
 async def get_chk_universal(message: types.Message, state: FSMContext):
     file_id = None
@@ -327,7 +340,7 @@ async def get_chk_universal(message: types.Message, state: FSMContext):
     if file_id:
         await finalize_order(message, state, "Karta", file_id, check_type)
     else:
-        await message.answer("Iltimos, chekni rasm yoki fayl (pdf, doc) ko'rinishida yuboring.")
+        await message.answer("Iltimos, rasm yoki pdf/doc yuboring.")
 
 async def finalize_order(message, state, pay_method, check_id=None, check_type="photo"):
     data = await state.get_data()
@@ -348,7 +361,6 @@ async def finalize_order(message, state, pay_method, check_id=None, check_type="
         
     txt += f"\n💰 Jami: {total} so'm ({pay_method})"
     
-    # Adminga yuborish
     for admin in ADMIN_IDS:
         try:
             if check_id:
@@ -358,13 +370,20 @@ async def finalize_order(message, state, pay_method, check_id=None, check_type="
                     await bot.send_photo(admin, check_id, caption=txt, parse_mode="HTML")
             else:
                 await bot.send_message(admin, txt, parse_mode="HTML")
-        except Exception as e:
-            print(f"Adminga yuborishda xato: {e}")
+        except: pass
         
-    await message.answer("✅ Buyurtmangiz qabul qilindi!", reply_markup=main_menu_kb(message.from_user.id))
+    await message.answer("✅ Buyurtma qabul qilindi!", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
+# --- DEBUG: Agar rasm kelsa-yu, holat yo'q bo'lsa (Sizdagi muammo shu) ---
+@dp.message(F.photo)
+async def debug_photo(message: types.Message):
+    await message.answer("Rasm qabul qilindi, lekin hozir mahsulot qo'shish rejimida emassiz.\n\n"
+                         "Iltimos, avval <b>➕ Mahsulot qo'shish</b> tugmasini bosing, keyin rasmni yuboring.", parse_mode="HTML")
+
 async def main():
+    # ESKI WEBHOOKLARNI O'CHIRISH (MUHIM)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
